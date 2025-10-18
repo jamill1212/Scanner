@@ -58,9 +58,9 @@
     "zod": "^3.24.4"
   },
   "scripts": {
-  "analyze": "source-map-explorer 'build/static/js/*.js'"                   "start": "craco start",
+  "analyze": "source-map-explorer 'build/static/js/*.js'",                           "start": "craco start", 
     "build": "craco build",
-    "test": "craco test"
+    "test": "craco test"            
   },
   "browserslist": {
     "production": [
