@@ -1,7 +1,5 @@
  
-} 
- - name: Install root deps
-   run: yarn install --frozen-lockfile
+
  - name: Run frontend tests
    run: yarn --cwd frontend test --watchAll=false
  "^@/(.*)$": "<rootDir>/src/$1"
