@@ -2,79 +2,96 @@
 const path = require("path");
 require("dotenv").config();
 
+const isTrue = (v) => String(v).toLowerCase() === "true";
+
 // Environment variable overrides
 const config = {
-  disableHotReload: process.env.DISABLE_HOT_RELOAD === "true",
-  enableVisualEdits: process.env.REACT_APP_ENABLE_VISUAL_EDITS === "true",
-  enableHealthCheck: process.env.ENABLE_HEALTH_CHECK === "true",
+  disableHotReload: isTrue(process.env.DISABLE_HOT_RELOAD),
+  enableVisualEdits: isTrue(process.env.REACT_APP_ENABLE_VISUAL_EDITS),
+  enableHealthCheck: isTrue(process.env.ENABLE_HEALTH_CHECK),
 };
 
-// Conditionally load visual editing modules only if enabled
+// Conditionally load visual editing modules only if enabled (guard with try/catch)
 let babelMetadataPlugin;
 let setupDevServer;
-
 if (config.enableVisualEdits) {
-  babelMetadataPlugin = require("./plugins/visual-edits/babel-metadata-plugin");
-  setupDevServer = require("./plugins/visual-edits/dev-server-setup");
+  try {
+    babelMetadataPlugin = require("./plugins/visual-edits/babel-metadata-plugin");
+    setupDevServer = require("./plugins/visual-edits/dev-server-setup");
+  } catch (err) {
+    // optional: console.warn("Visual edits plugins not found, skipping:", err);
+    babelMetadataPlugin = undefined;
+    setupDevServer = undefined;
+  }
 }
 
-// Conditionally load health check modules only if enabled
+// Conditionally load health check modules only if enabled (guard with try/catch)
 let WebpackHealthPlugin;
 let setupHealthEndpoints;
 let healthPluginInstance;
-
 if (config.enableHealthCheck) {
-  WebpackHealthPlugin = require("./plugins/health-check/webpack-health-plugin");
-  setupHealthEndpoints = require("./plugins/health-check/health-endpoints");
-  healthPluginInstance = new WebpackHealthPlugin();
+  try {
+    WebpackHealthPlugin = require("./plugins/health-check/webpack-health-plugin");
+    setupHealthEndpoints = require("./plugins/health-check/health-endpoints");
+    if (typeof WebpackHealthPlugin === "function") {
+      healthPluginInstance = new WebpackHealthPlugin();
+    }
+  } catch (err) {
+    // optional: console.warn("Health-check plugins not found, skipping:", err);
+    WebpackHealthPlugin = undefined;
+    setupHealthEndpoints = undefined;
+    healthPluginInstance = undefined;
+  }
 }
 
 const webpackConfig = {
   webpack: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      "@": path.resolve(__dirname, "src"),
     },
-    configure: (webpackConfig) => {
+    configure: (cfg = {}) => {
+      // Ensure plugins array exists
+      cfg.plugins = Array.isArray(cfg.plugins) ? cfg.plugins : [];
 
       // Disable hot reload completely if environment variable is set
       if (config.disableHotReload) {
-        // Remove hot reload related plugins
-        webpackConfig.plugins = webpackConfig.plugins.filter(plugin => {
-          return !(plugin.constructor.name === 'HotModuleReplacementPlugin');
+        // Remove hot reload related plugins (safe checks)
+        cfg.plugins = cfg.plugins.filter((plugin) => {
+          return !(plugin && plugin.constructor && plugin.constructor.name === "HotModuleReplacementPlugin");
         });
 
         // Disable watch mode
-        webpackConfig.watch = false;
-        webpackConfig.watchOptions = {
+        cfg.watch = false;
+        cfg.watchOptions = {
           ignored: /.*/, // Ignore all files
         };
       } else {
-        // Add ignored patterns to reduce watched directories
-        webpackConfig.watchOptions = {
-          ...webpackConfig.watchOptions,
+        // Add ignored patterns to reduce watched directories (preserve existing watchOptions)
+        cfg.watchOptions = {
+          ...(cfg.watchOptions || {}),
           ignored: [
-            '**/node_modules/**',
-            '**/.git/**',
-            '**/build/**',
-            '**/dist/**',
-            '**/coverage/**',
-            '**/public/**',
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/build/**",
+            "**/dist/**",
+            "**/coverage/**",
+            "**/public/**",
           ],
         };
       }
 
       // Add health check plugin to webpack if enabled
       if (config.enableHealthCheck && healthPluginInstance) {
-        webpackConfig.plugins.push(healthPluginInstance);
+        cfg.plugins.push(healthPluginInstance);
       }
 
-      return webpackConfig;
+      return cfg;
     },
   },
 };
 
-// Only add babel plugin if visual editing is enabled
-if (config.enableVisualEdits) {
+// Only add babel plugin if visual editing is enabled and plugin loaded
+if (config.enableVisualEdits && babelMetadataPlugin) {
   webpackConfig.babel = {
     plugins: [babelMetadataPlugin],
   };
@@ -82,31 +99,40 @@ if (config.enableVisualEdits) {
 
 // Setup dev server with visual edits and/or health check
 if (config.enableVisualEdits || config.enableHealthCheck) {
-  webpackConfig.devServer = (devServerConfig) => {
+  webpackConfig.devServer = (devServerConfig = {}) => {
+    let cfg = devServerConfig;
+
     // Apply visual edits dev server setup if enabled
-    if (config.enableVisualEdits && setupDevServer) {
-      devServerConfig = setupDevServer(devServerConfig);
+    if (config.enableVisualEdits && typeof setupDevServer === "function") {
+      try {
+        cfg = setupDevServer(cfg) || cfg;
+      } catch (err) {
+        // optional: console.warn("setupDevServer failed:", err);
+      }
     }
 
     // Add health check endpoints if enabled
-    if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
-      const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
+    if (config.enableHealthCheck && typeof setupHealthEndpoints === "function" && healthPluginInstance) {
+      const originalSetupMiddlewares = cfg.setupMiddlewares;
 
-      devServerConfig.setupMiddlewares = (middlewares, devServer) => {
-        // Call original setup if exists
-        if (originalSetupMiddlewares) {
-          middlewares = originalSetupMiddlewares(middlewares, devServer);
+      cfg.setupMiddlewares = (middlewares = [], devServer) => {
+        // Call original setup if exists (safely)
+        if (typeof originalSetupMiddlewares === "function") {
+          try {
+            middlewares = originalSetupMiddlewares(middlewares, devServer) || middlewares;
+          } catch (err) {
+            // optional: console.warn("original setupMiddlewares failed:", err);
+          }
         }
 
-        // Setup health endpoints
-        setupHealthEndpoints(devServer, healthPluginInstance);
+        try {
+          setupHealthEndpoints(devServer, healthPluginInstance);
+        } catch (err) {
+          // optional: console.warn("setupHealthEndpoints failed:", err);
+        }
 
         return middlewares;
       };
     }
 
-    return devServerConfig;
-  };
-}
-
-module.exports = webpackConfig;
+ 
